@@ -4,8 +4,10 @@ use pyo3::wrap_pyfunction;
 use std::collections::HashMap;
 
 use crate::{
+    actions::Action,
     deck::Deck,
     game::Game,
+    generate_possible_actions,
     models::{Ability, Attack, Card, EnergyType, PlayedCard},
     players::{create_players, fill_code_array, parse_player_code},
     state::{GameOutcome, State},
@@ -312,6 +314,42 @@ impl PyPlayedCard {
 impl From<PlayedCard> for PyPlayedCard {
     fn from(played_card: PlayedCard) -> Self {
         PyPlayedCard { played_card }
+    }
+}
+
+/// Python wrapper for Action
+#[pyclass]
+#[derive(Clone)]
+pub struct PyAction {
+    action: Action,
+}
+
+#[pymethods]
+impl PyAction {
+    /// Get the actor (player index) of this action
+    #[getter]
+    fn actor(&self) -> usize {
+        self.action.actor
+    }
+
+    /// Get a string representation of the action
+    fn __repr__(&self) -> String {
+        format!("Action(actor={}, action={:?}, is_stack={})", 
+            self.action.actor, 
+            self.action.action,
+            self.action.is_stack
+        )
+    }
+
+    /// Get the action type as a string
+    fn action_type(&self) -> String {
+        format!("{:?}", self.action.action)
+    }
+}
+
+impl From<Action> for PyAction {
+    fn from(action: Action) -> Self {
+        PyAction { action }
     }
 }
 
@@ -712,6 +750,76 @@ impl PyGame {
         format!("{:?}", action.action)
     }
 
+    /// Get all possible actions for the current player.
+    ///
+    /// Returns:
+    ///     tuple: A tuple of (current_player_index, list_of_possible_actions)
+    ///         - current_player_index (int): The index of the player whose turn it is (0 or 1)
+    ///         - list_of_possible_actions (List[Action]): List of possible actions the current player can take
+    ///
+    /// Examples:
+    ///     >>> game = Game("deck_a.txt", "deck_b.txt")
+    ///     >>> player, actions = game.get_possible_actions()
+    ///     >>> print(f"Player {player} has {len(actions)} possible actions")
+    ///     >>> for i, action in enumerate(actions):
+    ///     ...     print(f"{i}: {action}")
+    fn get_possible_actions(&self) -> (usize, Vec<PyAction>) {
+        let state = self.game.get_state_clone();
+        let (actor, actions) = generate_possible_actions(&state);
+        let py_actions: Vec<PyAction> = actions.into_iter().map(|a| a.into()).collect();
+        (actor, py_actions)
+    }
+
+    /// Apply a specific action to the game state.
+    ///
+    /// This allows you to manually control the game by selecting which action to take,
+    /// rather than letting the player's strategy decide automatically.
+    ///
+    /// Args:
+    ///     action (Action): The action to apply
+    ///
+    /// Examples:
+    ///     >>> game = Game("deck_a.txt", "deck_b.txt")
+    ///     >>> player, actions = game.get_possible_actions()
+    ///     >>> # Apply the first available action
+    ///     >>> game.apply_action(actions[0])
+    fn apply_action(&mut self, action: PyAction) {
+        self.game.apply_action(&action.action);
+    }
+
+    /// Apply an action by its index from the list of possible actions.
+    ///
+    /// This is a convenience method that first gets the possible actions, then applies
+    /// the action at the specified index.
+    ///
+    /// Args:
+    ///     action_index (int): The index of the action to apply (0-based)
+    ///
+    /// Returns:
+    ///     Action: The action that was applied
+    ///
+    /// Raises:
+    ///     IndexError: If the action_index is out of range
+    ///
+    /// Examples:
+    ///     >>> game = Game("deck_a.txt", "deck_b.txt")
+    ///     >>> player, actions = game.get_possible_actions()
+    ///     >>> # Apply the first action (index 0)
+    ///     >>> applied_action = game.apply_action_by_index(0)
+    fn apply_action_by_index(&mut self, action_index: usize) -> PyResult<PyAction> {
+        let state = self.game.get_state_clone();
+        let (_, actions) = generate_possible_actions(&state);
+        if action_index >= actions.len() {
+            return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
+                format!("Action index {} out of range ({} actions available)", 
+                    action_index, actions.len())
+            ));
+        }
+        let action = actions[action_index].clone();
+        self.game.apply_action(&action);
+        Ok(PyAction { action })
+    }
+
     fn __repr__(&self) -> String {
         let state = self.game.get_state_clone();
         format!(
@@ -853,6 +961,7 @@ pub fn deckgym(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyState>()?;
     m.add_class::<PyGameOutcome>()?;
     m.add_class::<PySimulationResults>()?;
+    m.add_class::<PyAction>()?;
     m.add_function(wrap_pyfunction!(py_simulate, m)?)?;
     m.add_function(wrap_pyfunction!(get_player_types, m)?)?;
     Ok(())
