@@ -332,6 +332,12 @@ impl PyAction {
         self.action.actor
     }
 
+    /// Get whether this action is a stack action (triggered by an effect)
+    #[getter]
+    fn is_stack(&self) -> bool {
+        self.action.is_stack
+    }
+
     /// Get a string representation of the action
     fn __repr__(&self) -> String {
         format!("Action(actor={}, action={:?}, is_stack={})", 
